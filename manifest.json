@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "obsidian-arxiv-summarization",
+	"name": "Arxiv Summarization",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Summarize arxiv papers",
+	"author": "ParkSeongHyun",
+	"authorUrl": "https://github.com/Puer-Hyun",
+	"fundingUrl": "https://github.com/sponsors/Puer-Hyun",
 	"isDesktopOnly": false
 }

@@ -1,134 +1,304 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
-// Remember to rename these classes and interfaces!
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, requestUrl, WorkspaceLeaf, TFile } from 'obsidian';
 
 interface MyPluginSettings {
-	mySetting: string;
+    openaiApiKey: string;
+    translate: boolean;
+    targetLanguage: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+    openaiApiKey: '',
+    translate: false,
+    targetLanguage: '한국어'
 }
 
 export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+    settings: MyPluginSettings;
+    loadingIndicator: HTMLElement | null = null;
+    activeFile: TFile | null = null;
 
-	async onload() {
-		await this.loadSettings();
+    async onload() {
+        await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+        this.addRibbonIcon('dice', 'Arxiv Summarization', (evt: MouseEvent) => {
+            new ArxivSummarizationModal(this.app, this).open();
+        });
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+        this.addCommand({
+            id: 'open-arxiv-summarization-modal',
+            name: 'Summarize Arxiv Paper',
+            callback: () => {
+                new ArxivSummarizationModal(this.app, this).open();
+            }
+        });
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+        this.addSettingTab(new SampleSettingTab(this.app, this));
+    }
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
+    async summarizeArxiv(url: string, file: TFile): Promise<string> {
+        this.activeFile = file;
+        try {
+            const response = await requestUrl({
+                url: 'https://lqjltyh9ah.execute-api.ap-southeast-2.amazonaws.com/obsidian-summarization-v1/service',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    url: url,
+                    api_key: this.settings.openaiApiKey,
+                    translate: this.settings.translate,
+                    target_language: this.settings.targetLanguage
+                })
+            });
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+            console.log('summarizeArxiv response:', response.status, response.text);
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+            if (response.status !== 202) {
+                console.error('요약 요청 실패:', response);
+                throw new Error(`요약 요청 실패: ${response.status} - ${response.text}`);
+            }
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
+            const responseData = JSON.parse(response.text);
+            const requestId = responseData.request_id;
 
-	onunload() {
+            await new Promise(resolve => setTimeout(resolve, 2000));
 
-	}
+            return await this.pollForResult(requestId);
+        } catch (error) {
+            console.error('summarizeArxiv error:', error);
+            throw error;
+        }
+    }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+    async pollForResult(requestId: string, maxAttempts = 60, initialInterval = 1000): Promise<string> {
+        let interval = initialInterval;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                const response = await requestUrl({
+                    url: `https://lqjltyh9ah.execute-api.ap-southeast-2.amazonaws.com/obsidian-summarization-v1/status`,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        requestId: requestId
+                    })
+                });
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+                console.log(`Polling attempt ${attempt + 1}:`, response.status, response.text);
+
+                if (response.status === 200) {
+                    const result = JSON.parse(response.text);
+                    if (result.status === 'COMPLETED') {
+                        const parsedResult = JSON.parse(result.result);
+                        return this.formatSummary(parsedResult, result.url);
+                    } else if (result.status === 'ERROR') {
+                        throw new Error('요약 처리 중 오류 발생: ' + result.error);
+                    }
+                } else {
+                    console.error(`Unexpected response status: ${response.status}`, response.text);
+                    throw new Error(`Unexpected response status: ${response.status}`);
+                }
+            } catch (error) {
+                console.error(`Polling error:`, error);
+                throw error;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, interval));
+            interval = Math.min(interval * 1.5, 10000);
+        }
+
+        throw new Error('요약 시간 초과');
+    }
+
+    formatSummary(result: any, url: string): string {
+        let decodedSummary;
+        try {
+            decodedSummary = result.summary.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        } catch (error) {
+            console.error('Summary parsing error:', error);
+            decodedSummary = JSON.stringify(result);
+        }
+
+        return `## Arxiv 논문 요약\n\n원본 URL: ${url}\n\n### 요약\n${decodedSummary}\n\n---\n이 요약은 AI에 의해 생성되었으며, 부정확할 수 있습니다. 자세한 내용은 원본 논문을 참조하세요.`;
+    }
+
+    getActiveMarkdownEditor(): Editor | null {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        return view ? view.editor : null;
+    }
+
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
+
+    showLoadingIndicator() {
+        console.log('Showing loading indicator');
+        if (this.loadingIndicator) return;
+        this.loadingIndicator = document.createElement('div');
+        this.loadingIndicator.addClass('arxiv-summarization-loading');
+        this.loadingIndicator.innerHTML = `
+            <div class="spinner"></div>
+            <div class="message">요약 작업 중입니다. 이 작업은 시간이 걸릴 수 있습니다.</div>
+        `;
+        document.body.appendChild(this.loadingIndicator);
+        console.log('Loading indicator added to DOM');
+    }
+
+    hideLoadingIndicator() {
+        if (this.loadingIndicator) {
+            this.loadingIndicator.remove();
+            this.loadingIndicator = null;
+        }
+    }
+
+    async insertSummary(summary: string) {
+        if (this.activeFile) {
+            const content = await this.app.vault.read(this.activeFile);
+            const newContent = content + '\n\n' + summary;
+            await this.app.vault.modify(this.activeFile, newContent);
+            new Notice('요약이 성공적으로 삽입되었습니다.');
+        } else {
+            new Notice('요약을 삽입할 파일을 찾을 수 없습니다.');
+        }
+    }
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class ArxivSummarizationModal extends Modal {
+    plugin: MyPlugin;
+    inputEl: HTMLInputElement;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    constructor(app: App, plugin: MyPlugin) {
+        super(app);
+        this.plugin = plugin;
+    }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.createEl('h2', {text: 'Enter Arxiv URL'});
+
+        this.inputEl = contentEl.createEl('input', {
+            type: 'text',
+            placeholder: 'Please enter the Arxiv URL'
+        });
+        this.inputEl.style.width = '100%';
+        this.inputEl.style.height = '40px';
+        this.inputEl.style.fontSize = '16px';
+        this.inputEl.style.padding = '5px';
+        this.inputEl.style.marginBottom = '10px';
+
+        this.inputEl.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter') {
+                this.onSummarize();
+            }
+        });
+
+        const buttonEl = contentEl.createEl('button', {text: 'Summarize'});
+        buttonEl.style.width = '100%';
+        buttonEl.style.height = '40px';
+        buttonEl.style.fontSize = '16px';
+        buttonEl.addEventListener('click', this.onSummarize.bind(this));
+    }
+
+    async onSummarize() {
+        const url = this.inputEl.value.trim();
+        if (!url) {
+            new Notice('유효한 URL을 입력해주세요');
+            return;
+        }
+
+        if (!this.plugin.settings.openaiApiKey) {
+            new Notice('OpenAI API 키를 설정해주세요');
+            return;
+        }
+
+        const urlPattern = /^https:\/\/arxiv\.org\/.+/i;
+        if (!urlPattern.test(url)) {
+            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/로 시작해야 합니다)');
+            return;
+        }
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('활성화된 마크다운 파일이 없습니다.');
+            return;
+        }
+
+        this.close(); // 모달 닫기
+        this.plugin.showLoadingIndicator(); // 로딩 인디케이터 표시
+
+        try {
+            const summary = await this.plugin.summarizeArxiv(url, activeFile);
+            await this.plugin.insertSummary(summary);
+        } catch (error) {
+            new Notice('오류: ' + error.message);
+        } finally {
+            this.plugin.hideLoadingIndicator(); // 로딩 인디케이터 숨기기
+        }
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
 }
 
 class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+    plugin: MyPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+    constructor(app: App, plugin: MyPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
 
-	display(): void {
-		const {containerEl} = this;
+    display(): void {
+        const {containerEl} = this;
 
-		containerEl.empty();
+        containerEl.empty();
 
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+        new Setting(containerEl)
+            .setName('OpenAI API Key')
+            .setDesc('Enter your OpenAI API key')
+            .addText(text => text
+                .setPlaceholder('sk-...')
+                .setValue(this.plugin.settings.openaiApiKey)
+                .onChange(async (value) => {
+                    this.plugin.settings.openaiApiKey = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('번역 활성화')
+            .setDesc('요약문을 번역할지 선택합니다.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.translate)
+                .onChange(async (value) => {
+                    this.plugin.settings.translate = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
+        if (this.plugin.settings.translate) {
+            new Setting(containerEl)
+                .setName('목표 언어')
+                .setDesc('번역할 언어를 선택합니다.')
+                .addDropdown(dropdown => dropdown
+                    .addOption('한국어', '한국어')
+                    .addOption('Japanese', '일본어')
+                    .addOption('Chinese', '중국어')
+                    .addOption('Spanish', '스페인어')
+                    .addOption('French', '프랑스어')
+                    .addOption('German', '독일어')
+                    .setValue(this.plugin.settings.targetLanguage)
+                    .onChange(async (value) => {
+                        this.plugin.settings.targetLanguage = value;
+                        await this.plugin.saveSettings();
+                    }));
+        }
+    }
 }
