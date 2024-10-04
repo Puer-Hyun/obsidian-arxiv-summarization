@@ -38,6 +38,46 @@ export default class MyPlugin extends Plugin {
     async summarizeArxiv(url: string, file: TFile): Promise<string> {
         this.activeFile = file;
         try {
+            console.log('사전 검사 요청 시작:', url);
+            
+            // 사전 검사 요청
+            const preCheckResponse = await requestUrl({
+                url: 'https://lqjltyh9ah.execute-api.ap-southeast-2.amazonaws.com/obsidian-summarization-v1/check',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    url: url,
+                    target_language: this.settings.targetLanguage,
+                    status: "COMPLETED"
+                }),
+                throw: false // 오류 발생 시 예외를 던지지 않고 응답 객체를 반환합니다.
+            });
+    
+            console.log('사전 검사 응답:', preCheckResponse);
+    
+            // 응답 처리
+            if (preCheckResponse.status === 200 && preCheckResponse.text) {
+                try {
+                    const preCheckResult = JSON.parse(preCheckResponse.text);
+                    console.log('사전 검사 결과:', preCheckResult);
+                    
+                    if (preCheckResult.result) {
+                        const parsedResult = JSON.parse(preCheckResult.result);
+                        console.log('사전 검사 성공, 결과 반환');
+                        return this.formatSummary(parsedResult, url);
+                    }
+                } catch (error) {
+                    console.error('사전 검사 결과 파싱 오류:', error);
+                }
+            } else {
+                console.log('사전 검사 실패 또는 응답 없음:', preCheckResponse.status, preCheckResponse.text);
+            }
+    
+            console.log('사전 검사 실패 또는 데이터 없음, 기존 로직 시작');
+    
+            // 기존 로직 시작
             const response = await requestUrl({
                 url: 'https://lqjltyh9ah.execute-api.ap-southeast-2.amazonaws.com/obsidian-summarization-v1/service',
                 method: 'POST',
@@ -51,22 +91,22 @@ export default class MyPlugin extends Plugin {
                     target_language: this.settings.targetLanguage
                 })
             });
-
-            console.log('summarizeArxiv response:', response.status, response.text);
-
+    
+            console.log('summarizeArxiv 응답:', response.status, response.text);
+    
             if (response.status !== 202) {
                 console.error('요약 요청 실패:', response);
                 throw new Error(`요약 요청 실패: ${response.status} - ${response.text}`);
             }
-
+    
             const responseData = JSON.parse(response.text);
             const requestId = responseData.request_id;
-
+    
             await new Promise(resolve => setTimeout(resolve, 2000));
-
+    
             return await this.pollForResult(requestId);
         } catch (error) {
-            console.error('summarizeArxiv error:', error);
+            console.error('summarizeArxiv 오류:', error);
             throw error;
         }
     }
