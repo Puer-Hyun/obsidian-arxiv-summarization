@@ -32,6 +32,15 @@ export default class MyPlugin extends Plugin {
             }
         });
 
+        // 새로운 명령어 추가
+        this.addCommand({
+            id: 'summarize-with-llama',
+            name: 'llama로 요약하기',
+            callback: () => {
+                this.summarizeWithLlama();
+            }
+        });
+
         this.addSettingTab(new SampleSettingTab(this.app, this));
     }
 
@@ -207,6 +216,30 @@ export default class MyPlugin extends Plugin {
             new Notice('요약을 삽입할 파일을 찾을 수 없습니다.');
         }
     }
+
+    // 새로운 메서드 추가
+    async summarizeWithLlama() {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('활성화된 마크다운 파일이 없습니다.');
+            return;
+        }
+
+        const content = await this.app.vault.read(activeFile);
+        
+        // 여기에 llama를 사용한 요약 로직을 구현해야 합니다.
+        // 예를 들어:
+        // const summary = await this.llamaSummarize(content);
+        // await this.insertSummary(summary);
+
+        new Notice('llama로 요약 기능이 아직 구현되지 않았습니다.');
+    }
+
+    // llama 요약 로직 (실제 구현 필요)
+    // async llamaSummarize(content: string): Promise<string> {
+    //     // llama API를 사용한 요약 로직 구현
+    //     // return summarizedContent;
+    // }
 }
 
 class ArxivSummarizationModal extends Modal {
