@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, requestUrl, WorkspaceLeaf, TFile } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, requestUrl, WorkspaceLeaf, TFile, MetadataCache } from 'obsidian';
 
 interface MyPluginSettings {
     openaiApiKey: string;
@@ -227,7 +227,73 @@ export default class MyPlugin extends Plugin {
         }
     }
 
-    async fetchArxivMetadata(url: string): Promise<string> {
+    async insertMetadata(metadata: ArxivMetadata, file: TFile) {
+        if (file) {
+            try {
+                // @ts-ignore
+                const metaedit = this.app.plugins.plugins['metaedit'];
+                if (!metaedit) {
+                    new Notice('metaedit 플러그인이 설치되어 있지 않습니다.');
+                    return;
+                }
+
+                const { update } = metaedit.api;
+
+                // 기존 frontmatter 가져오기
+                const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+
+                // 새로운 메타데이터로 frontmatter 업데이트 (기존 값 유지)
+                const updatedFrontmatter = {
+                    ...frontmatter,
+                    title: metadata.title || frontmatter.title,
+                    paper_link: `@${metadata.paperLink}` || frontmatter.paper_link,
+                    publish_date: metadata.publishDate || frontmatter.publish_date,
+                    authors: metadata.authors || frontmatter.authors
+                };
+
+                // frontmatter 업데이트
+                await this.app.fileManager.processFrontMatter(file, fm => {
+                    Object.assign(fm, updatedFrontmatter);
+                });
+
+                // 기존 파일 내용 읽기
+                let content = await this.app.vault.read(file);
+
+                // 초록 추가 (frontmatter 외부에)
+                if (!content.includes("### 초록")) {
+                    content += `\n\n### 초록\n${metadata.abstract}\n`;
+                    await this.app.vault.modify(file, content);
+                }
+
+                new Notice('메타데이터가 성공적으로 삽입되었습니다.');
+            } catch (error) {
+                console.error('메타데이터 삽입 오류:', error);
+                new Notice('메타데이터 삽입 중 오류가 발생했습니다.');
+            }
+        } else {
+            new Notice('메타데이터를 삽입할 파일을 찾을 수 없습니다.');
+        }
+    }
+
+    // YAML 변환 헬퍼 함수 개선
+    private objectToYaml(obj: any): string {
+        return Object.entries(obj)
+            .map(([key, value]) => {
+                if (value === null || value === undefined || value === '') {
+                    return `${key}:`;
+                }
+                if (Array.isArray(value)) {
+                    return `${key}: [${value.join(', ')}]`;
+                }
+                if (typeof value === 'string' && (value.includes('\n') || value.includes(':'))) {
+                    return `${key}: |\n  ${value.replace(/\n/g, '\n  ')}`;
+                }
+                return `${key}: ${value}`;
+            })
+            .join('\n');
+    }
+
+    async fetchArxivMetadata(url: string): Promise<ArxivMetadata> {
         const arxivId = this.extractArxivId(url);
         if (!arxivId) {
             throw new Error('유효한 Arxiv URL이 아닙니다.');
@@ -236,7 +302,7 @@ export default class MyPlugin extends Plugin {
         // 캐시 확인
         const cachedMetadata = this.metadataCache.get(arxivId);
         if (cachedMetadata) {
-            return cachedMetadata;
+            return JSON.parse(cachedMetadata);
         }
 
         const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
@@ -269,10 +335,18 @@ export default class MyPlugin extends Plugin {
                 .join(', ');
             const abstract = entry.querySelector('summary')?.textContent?.trim() || '초록 없음';
 
-            const metadata = this.formatMetadata(title, paperLink, publishDate, authors, abstract);
-            
+            console.log('Fetched metadata:', { title, paperLink, publishDate, authors, abstract });
+
+            const metadata: ArxivMetadata = {
+                title,
+                paperLink,
+                publishDate,
+                authors,
+                abstract
+            };
+
             // 캐시에 저장
-            this.metadataCache.set(arxivId, metadata);
+            this.metadataCache.set(arxivId, JSON.stringify(metadata));
 
             return metadata;
         } catch (error) {
@@ -286,25 +360,19 @@ export default class MyPlugin extends Plugin {
         return match ? match[1] : null;
     }
 
-    formatMetadata(title: string, paperLink: string, publishDate: string, authors: string, abstract: string): string {
-        return `## ${title}
-
-- **링크:** ${paperLink}
-- **출판일:** ${publishDate}
-- **저자:** ${authors}
-
-### 초록
-${abstract}
-
----
-이 메타데이터는 Arxiv API를 통해 자동으로 가져왔습니다.`;
-    }
-
     async summarizeWithOllama(url: string): Promise<string> {
         // Ollama API를 사용한 요약 로직 구현
         // 이 부분은 Ollama API의 구체적인 사용 방법에 따라 구현해야 합니다.
         throw new Error('Ollama 요약 기능이 아직 구현되지 않았습니다.');
     }
+}
+
+interface ArxivMetadata {
+    title: string;
+    paperLink: string;
+    publishDate: string;
+    authors: string;
+    abstract: string;
 }
 
 class ArxivSummarizationModal extends Modal {
@@ -425,19 +493,13 @@ class ArxivMetadataModal extends Modal {
     async onFetchMetadata() {
         const url = this.inputEl.value.trim();
         if (!url) {
-            new Notice('유효한 URL을 입력해주세요');
+            new Notice('유효한 URL을 입���해주세요');
             return;
         }
 
         const urlPattern = /^https:\/\/arxiv\.org\/abs\/.+/i;
         if (!urlPattern.test(url)) {
-            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
-            return;
-        }
-
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice('활성화된 마크다운 파일이 없습니다.');
+            new Notice('유효한 Arxiv URL을 력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
             return;
         }
 
@@ -445,8 +507,16 @@ class ArxivMetadataModal extends Modal {
         this.plugin.showLoadingIndicator();
 
         try {
+            let activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) {
+                // 새 파일 생성
+                const fileName = `Arxiv Paper - ${new Date().toISOString().split('T')[0]}.md`;
+                activeFile = await this.app.vault.create(fileName, "---\n---\n\n");
+                new Notice(`새 파일이 생성되었습니다: ${fileName}`);
+            }
+
             const metadata = await this.plugin.fetchArxivMetadata(url);
-            await this.plugin.insertSummary(metadata, activeFile);
+            await this.plugin.insertMetadata(metadata, activeFile);
             new Notice('메타데이터가 성공적으로 삽입되었습니다.');
         } catch (error) {
             new Notice('오류: ' + error.message);
