@@ -265,10 +265,21 @@ export default class MyPlugin extends Plugin {
                     if (content.trim() === "") {
                         content = abstractContent.trim();
                     } else {
-                        content += abstractContent;
+                        // 기존 내용이 있는 경우, 줄바꿈을 추가하고 초록을 삽입
+                        content = content.trim() + "\n\n" + abstractContent;
                     }
-                    await this.app.vault.modify(file, content);
                 }
+
+                // 불필요한 줄바꿈 제거
+                content = content.replace(/^\n+/, '').replace(/\n+$/, '');
+
+                // 파일 내용 업데이트
+                await this.app.vault.modify(file, content);
+
+                // 파일 시작 부분의 불필요한 줄바꿈 제거
+                const finalContent = await this.app.vault.read(file);
+                const cleanedContent = finalContent.replace(/^---\n([\s\S]*?)\n---\n\n+/, '---\n$1\n---\n');
+                await this.app.vault.modify(file, cleanedContent);
 
                 new Notice('메타데이터가 성공적으로 삽입되었습니다.');
             } catch (error) {
@@ -498,7 +509,7 @@ class ArxivMetadataModal extends Modal {
     async onFetchMetadata() {
         const url = this.inputEl.value.trim();
         if (!url) {
-            new Notice('유효한 URL을 입력해주세요');
+            new Notice('효한 URL을 입력해주세요');
             return;
         }
 
