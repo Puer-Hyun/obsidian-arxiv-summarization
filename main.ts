@@ -261,7 +261,12 @@ export default class MyPlugin extends Plugin {
 
                 // 초록 추가 (frontmatter 외부에)
                 if (!content.includes("### 초록")) {
-                    content += `### 초록\n${metadata.abstract}\n`;
+                    const abstractContent = `### 초록\n${metadata.abstract}\n`;
+                    if (content.trim() === "") {
+                        content = abstractContent.trim();
+                    } else {
+                        content += abstractContent;
+                    }
                     await this.app.vault.modify(file, content);
                 }
 
@@ -499,7 +504,7 @@ class ArxivMetadataModal extends Modal {
 
         const urlPattern = /^https:\/\/arxiv\.org\/abs\/.+/i;
         if (!urlPattern.test(url)) {
-            new Notice('유효한 Arxiv URL을 력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
+            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
             return;
         }
 
@@ -511,7 +516,7 @@ class ArxivMetadataModal extends Modal {
             if (!activeFile) {
                 // 새 파일 생성
                 const fileName = `Arxiv Paper - ${new Date().toISOString().split('T')[0]}.md`;
-                activeFile = await this.app.vault.create(fileName, "---\n---\n\n");
+                activeFile = await this.app.vault.create(fileName, "");
                 new Notice(`새 파일이 생성되었습니다: ${fileName}`);
             }
 
