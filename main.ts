@@ -16,6 +16,7 @@ export default class MyPlugin extends Plugin {
     settings: MyPluginSettings;
     loadingIndicator: HTMLElement | null = null;
     activeFile: TFile | null = null;
+    private metadataCache: Map<string, string> = new Map();
 
     async onload() {
         await this.loadSettings();
@@ -32,12 +33,21 @@ export default class MyPlugin extends Plugin {
             }
         });
 
-        // 새로운 명령어 추가
+        // Arxiv 메타데이터 가져오기 명령어 추가
         this.addCommand({
-            id: 'summarize-with-llama',
-            name: 'llama로 요약하기',
+            id: 'fetch-arxiv-metadata',
+            name: 'Arxiv 메타데이터 가져오기',
             callback: () => {
-                this.summarizeWithLlama();
+                new ArxivMetadataModal(this.app, this).open();
+            }
+        });
+
+        // Ollama로 요약하기 명령어 추가
+        this.addCommand({
+            id: 'summarize-with-ollama',
+            name: 'Ollama로 요약하기',
+            callback: () => {
+                new OllamaSummarizationModal(this.app, this).open();
             }
         });
 
@@ -70,7 +80,7 @@ export default class MyPlugin extends Plugin {
             if (preCheckResponse.status === 200 && preCheckResponse.text) {
                 try {
                     const preCheckResult = JSON.parse(preCheckResponse.text);
-                    console.log('사전 검사 결과:', preCheckResult);
+                    console.log('사전 검사 과:', preCheckResult);
                     
                     if (preCheckResult.result) {
                         const parsedResult = JSON.parse(preCheckResult.result);
@@ -206,40 +216,95 @@ export default class MyPlugin extends Plugin {
         }
     }
 
-    async insertSummary(summary: string) {
-        if (this.activeFile) {
-            const content = await this.app.vault.read(this.activeFile);
+    async insertSummary(summary: string, file: TFile) {
+        if (file) {
+            const content = await this.app.vault.read(file);
             const newContent = content + '\n\n' + summary;
-            await this.app.vault.modify(this.activeFile, newContent);
-            new Notice('요약이 성공적으로 삽입되었습니다.');
+            await this.app.vault.modify(file, newContent);
+            new Notice('메타데이터가 성공적으로 삽입되었습니다.');
         } else {
-            new Notice('요약을 삽입할 파일을 찾을 수 없습니다.');
+            new Notice('메타데이터를 삽입할 파일을 찾을 수 없습니다.');
         }
     }
 
-    // 새로운 메서드 추가
-    async summarizeWithLlama() {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice('활성화된 마크다운 파일이 없습니다.');
-            return;
+    async fetchArxivMetadata(url: string): Promise<string> {
+        const arxivId = this.extractArxivId(url);
+        if (!arxivId) {
+            throw new Error('유효한 Arxiv URL이 아닙니다.');
         }
 
-        const content = await this.app.vault.read(activeFile);
+        // 캐시 확인
+        const cachedMetadata = this.metadataCache.get(arxivId);
+        if (cachedMetadata) {
+            return cachedMetadata;
+        }
+
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
         
-        // 여기에 llama를 사용한 요약 로직을 구현해야 합니다.
-        // 예를 들어:
-        // const summary = await this.llamaSummarize(content);
-        // await this.insertSummary(summary);
+        try {
+            const response = await requestUrl({
+                url: apiUrl,
+                headers: {
+                    'User-Agent': 'ObsidianArxivPlugin/1.0 (https://github.com/yourusername/your-plugin-repo; mailto:your-email@example.com)'
+                }
+            });
 
-        new Notice('llama로 요약 기능이 아직 구현되지 않았습니다.');
+            if (response.status !== 200) {
+                throw new Error(`Arxiv API 요청 실패: ${response.status}`);
+            }
+
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(response.text, "text/xml");
+
+            const entry = xmlDoc.querySelector('entry');
+            if (!entry) {
+                throw new Error('논문 정보를 찾을 수 없습니다.');
+            }
+
+            const title = entry.querySelector('title')?.textContent?.trim() || '제목 없음';
+            const paperLink = entry.querySelector('id')?.textContent || url;
+            const publishDate = entry.querySelector('published')?.textContent?.split('T')[0] || '날짜 없음';
+            const authors = Array.from(entry.querySelectorAll('author name'))
+                .map(author => author.textContent)
+                .join(', ');
+            const abstract = entry.querySelector('summary')?.textContent?.trim() || '초록 없음';
+
+            const metadata = this.formatMetadata(title, paperLink, publishDate, authors, abstract);
+            
+            // 캐시에 저장
+            this.metadataCache.set(arxivId, metadata);
+
+            return metadata;
+        } catch (error) {
+            console.error('Arxiv 메타데이터 가져오기 오류:', error);
+            throw new Error('Arxiv 메타데이터를 가져오는 중 오류가 발생했습니다.');
+        }
     }
 
-    // llama 요약 로직 (실제 구현 필요)
-    // async llamaSummarize(content: string): Promise<string> {
-    //     // llama API를 사용한 요약 로직 구현
-    //     // return summarizedContent;
-    // }
+    extractArxivId(url: string): string | null {
+        const match = url.match(/arxiv\.org\/abs\/(\d+\.\d+)/);
+        return match ? match[1] : null;
+    }
+
+    formatMetadata(title: string, paperLink: string, publishDate: string, authors: string, abstract: string): string {
+        return `## ${title}
+
+- **링크:** ${paperLink}
+- **출판일:** ${publishDate}
+- **저자:** ${authors}
+
+### 초록
+${abstract}
+
+---
+이 메타데이터는 Arxiv API를 통해 자동으로 가져왔습니다.`;
+    }
+
+    async summarizeWithOllama(url: string): Promise<string> {
+        // Ollama API를 사용한 요약 로직 구현
+        // 이 부분은 Ollama API의 구체적인 사용 방법에 따라 구현해야 합니다.
+        throw new Error('Ollama 요약 기능이 아직 구현되지 않았습니다.');
+    }
 }
 
 class ArxivSummarizationModal extends Modal {
@@ -307,11 +372,160 @@ class ArxivSummarizationModal extends Modal {
 
         try {
             const summary = await this.plugin.summarizeArxiv(url, activeFile);
-            await this.plugin.insertSummary(summary);
+            await this.plugin.insertSummary(summary, activeFile);
         } catch (error) {
             new Notice('오류: ' + error.message);
         } finally {
             this.plugin.hideLoadingIndicator(); // 로딩 인디케이터 숨기기
+        }
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
+}
+
+class ArxivMetadataModal extends Modal {
+    plugin: MyPlugin;
+    inputEl: HTMLInputElement;
+
+    constructor(app: App, plugin: MyPlugin) {
+        super(app);
+        this.plugin = plugin;
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.createEl('h2', {text: 'Arxiv URL 입력'});
+
+        this.inputEl = contentEl.createEl('input', {
+            type: 'text',
+            placeholder: 'https://arxiv.org/abs/XXXX.XXXXX'
+        });
+        this.inputEl.style.width = '100%';
+        this.inputEl.style.height = '40px';
+        this.inputEl.style.fontSize = '16px';
+        this.inputEl.style.padding = '5px';
+        this.inputEl.style.marginBottom = '10px';
+
+        this.inputEl.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter') {
+                this.onFetchMetadata();
+            }
+        });
+
+        const buttonEl = contentEl.createEl('button', {text: '메타데이터 가져오기'});
+        buttonEl.style.width = '100%';
+        buttonEl.style.height = '40px';
+        buttonEl.style.fontSize = '16px';
+        buttonEl.addEventListener('click', this.onFetchMetadata.bind(this));
+    }
+
+    async onFetchMetadata() {
+        const url = this.inputEl.value.trim();
+        if (!url) {
+            new Notice('유효한 URL을 입력해주세요');
+            return;
+        }
+
+        const urlPattern = /^https:\/\/arxiv\.org\/abs\/.+/i;
+        if (!urlPattern.test(url)) {
+            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
+            return;
+        }
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('활성화된 마크다운 파일이 없습니다.');
+            return;
+        }
+
+        this.close();
+        this.plugin.showLoadingIndicator();
+
+        try {
+            const metadata = await this.plugin.fetchArxivMetadata(url);
+            await this.plugin.insertSummary(metadata, activeFile);
+            new Notice('메타데이터가 성공적으로 삽입되었습니다.');
+        } catch (error) {
+            new Notice('오류: ' + error.message);
+        } finally {
+            this.plugin.hideLoadingIndicator();
+        }
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
+}
+
+class OllamaSummarizationModal extends Modal {
+    plugin: MyPlugin;
+    inputEl: HTMLInputElement;
+
+    constructor(app: App, plugin: MyPlugin) {
+        super(app);
+        this.plugin = plugin;
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.createEl('h2', {text: 'Arxiv URL 입력 (Ollama 요약)'});
+
+        this.inputEl = contentEl.createEl('input', {
+            type: 'text',
+            placeholder: 'https://arxiv.org/abs/XXXX.XXXXX'
+        });
+        this.inputEl.style.width = '100%';
+        this.inputEl.style.height = '40px';
+        this.inputEl.style.fontSize = '16px';
+        this.inputEl.style.padding = '5px';
+        this.inputEl.style.marginBottom = '10px';
+
+        this.inputEl.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter') {
+                this.onSummarize();
+            }
+        });
+
+        const buttonEl = contentEl.createEl('button', {text: 'Ollama로 요약하기'});
+        buttonEl.style.width = '100%';
+        buttonEl.style.height = '40px';
+        buttonEl.style.fontSize = '16px';
+        buttonEl.addEventListener('click', this.onSummarize.bind(this));
+    }
+
+    async onSummarize() {
+        const url = this.inputEl.value.trim();
+        if (!url) {
+            new Notice('유효한 URL을 입력해주세요');
+            return;
+        }
+
+        const urlPattern = /^https:\/\/arxiv\.org\/abs\/.+/i;
+        if (!urlPattern.test(url)) {
+            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/abs/로 시작해야 합니다)');
+            return;
+        }
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('활성화된 마크다운 파일이 없습니다.');
+            return;
+        }
+
+        this.close();
+        this.plugin.showLoadingIndicator();
+
+        try {
+            const summary = await this.plugin.summarizeWithOllama(url);
+            await this.plugin.insertSummary(summary, activeFile);
+        } catch (error) {
+            new Notice('오류: ' + error.message);
+        } finally {
+            this.plugin.hideLoadingIndicator();
         }
     }
 
