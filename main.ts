@@ -261,7 +261,7 @@ export default class MyPlugin extends Plugin {
 
                 // 초록 추가 (frontmatter 외부에)
                 if (!content.includes("### 초록")) {
-                    content += `\n\n### 초록\n${metadata.abstract}\n`;
+                    content += `### 초록\n${metadata.abstract}\n`;
                     await this.app.vault.modify(file, content);
                 }
 
