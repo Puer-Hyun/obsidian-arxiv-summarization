@@ -242,11 +242,11 @@ export default class MyPlugin extends Plugin {
                 // 기존 frontmatter 가져오기
                 const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
 
-                // 새로운 메타데이터로 frontmatter 업데이트 (기존 값 유지)
+                // 새로운 메타데이터로 frontmatter 업데이트
                 const updatedFrontmatter = {
                     ...frontmatter,
                     title: metadata.title || frontmatter.title,
-                    paper_link: `@${metadata.paperLink}` || frontmatter.paper_link,
+                    paper_link: metadata.paperLink || frontmatter.paper_link,
                     publish_date: metadata.publishDate || frontmatter.publish_date,
                     authors: metadata.authors || frontmatter.authors
                 };
@@ -493,7 +493,7 @@ class ArxivMetadataModal extends Modal {
     async onFetchMetadata() {
         const url = this.inputEl.value.trim();
         if (!url) {
-            new Notice('유효한 URL을 입���해주세요');
+            new Notice('유효한 URL을 입력해주세요');
             return;
         }
 
