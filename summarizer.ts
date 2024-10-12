@@ -1,4 +1,4 @@
-import { App, Modal, Notice, TFile, requestUrl } from 'obsidian';
+import { App, Notice, TFile, requestUrl } from 'obsidian';
 import MyPlugin from './main';
 
 export class ArxivSummarizer {
@@ -11,11 +11,50 @@ export class ArxivSummarizer {
         this.plugin = plugin;
     }
 
-    openModal() {
-        new ArxivSummarizationModal(this.app, this).open();
+    async summarizeFromClipboard() {
+        try {
+            const clipboardText = await navigator.clipboard.readText();
+            const url = this.normalizeArxivUrl(clipboardText.trim());
+            
+            if (!this.isValidArxivUrl(url)) {
+                throw new Error('클립보드의 내용이 유효한 Arxiv URL이 아닙니다.');
+            }
+
+            const activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) {
+                throw new Error('활성화된 마크다운 파일이 없습니다.');
+            }
+
+            this.showLoadingIndicator();
+
+            const summary = await this.summarizeArxiv(url, activeFile);
+            await this.insertSummary(summary, activeFile);
+            new Notice('요약이 성공적으로 삽입되었습니다.');
+        } catch (error) {
+            new Notice('오류: ' + error.message);
+        } finally {
+            this.hideLoadingIndicator();
+        }
+    }
+
+    private normalizeArxivUrl(url: string): string {
+        url = url.replace(/^http:/, 'https:');
+        url = url.replace(/arxiv\.org\/pdf/, 'arxiv.org/abs');
+        url = url.replace(/\.pdf$/, '');
+        return url;
+    }
+
+    private isValidArxivUrl(url: string): boolean {
+        const urlPattern = /^https:\/\/arxiv\.org\/abs\/.+/i;
+        return urlPattern.test(url);
     }
 
     async summarizeArxiv(url: string, file: TFile): Promise<string> {
+        url = this.normalizeArxivUrl(url);
+        if (!this.isValidArxivUrl(url)) {
+            throw new Error('유효한 Arxiv URL이 아닙니다.');
+        }
+
         try {
             console.log('사전 검사 요청 시작:', url);
             
@@ -169,84 +208,5 @@ export class ArxivSummarizer {
         } else {
             new Notice('요약을 삽입할 파일을 찾을 수 없습니다.');
         }
-    }
-}
-
-class ArxivSummarizationModal extends Modal {
-    private plugin: ArxivSummarizer;
-    private inputEl: HTMLInputElement;
-
-    constructor(app: App, plugin: ArxivSummarizer) {
-        super(app);
-        this.plugin = plugin;
-    }
-
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Enter Arxiv URL'});
-
-        this.inputEl = contentEl.createEl('input', {
-            type: 'text',
-            placeholder: 'Please enter the Arxiv URL'
-        });
-        this.inputEl.style.width = '100%';
-        this.inputEl.style.height = '40px';
-        this.inputEl.style.fontSize = '16px';
-        this.inputEl.style.padding = '5px';
-        this.inputEl.style.marginBottom = '10px';
-
-        this.inputEl.addEventListener('keydown', (event: KeyboardEvent) => {
-            if (event.key === 'Enter') {
-                this.onSummarize();
-            }
-        });
-
-        const buttonEl = contentEl.createEl('button', {text: 'Summarize'});
-        buttonEl.style.width = '100%';
-        buttonEl.style.height = '40px';
-        buttonEl.style.fontSize = '16px';
-        buttonEl.addEventListener('click', this.onSummarize.bind(this));
-    }
-
-    async onSummarize() {
-        const url = this.inputEl.value.trim();
-        if (!url) {
-            new Notice('유효한 URL을 입력해주세요');
-            return;
-        }
-
-        if (!this.plugin.plugin.settings.openaiApiKey) {
-            new Notice('OpenAI API 키를 설정해주세요');
-            return;
-        }
-
-        const urlPattern = /^https:\/\/arxiv\.org\/.+/i;
-        if (!urlPattern.test(url)) {
-            new Notice('유효한 Arxiv URL을 입력해주세요 (https://arxiv.org/로 시작해야 합니다)');
-            return;
-        }
-
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice('활성화된 마크다운 파일이 없습니다.');
-            return;
-        }
-
-        this.close();
-        this.plugin.showLoadingIndicator();
-
-        try {
-            const summary = await this.plugin.summarizeArxiv(url, activeFile);
-            await this.plugin.insertSummary(summary, activeFile);
-        } catch (error) {
-            new Notice('오류: ' + error.message);
-        } finally {
-            this.plugin.hideLoadingIndicator();
-        }
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
     }
 }

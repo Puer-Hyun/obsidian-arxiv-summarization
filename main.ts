@@ -36,7 +36,7 @@ export default class MyPlugin extends Plugin {
             id: 'open-arxiv-summarization-modal',
             name: 'Summarize Arxiv Paper',
             callback: () => {
-                this.summarizer.openModal();
+                this.summarizer.summarizeFromClipboard();
             }
         });
 
