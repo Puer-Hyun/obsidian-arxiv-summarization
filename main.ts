@@ -34,7 +34,7 @@ export default class MyPlugin extends Plugin {
 
         this.addCommand({
             id: 'open-arxiv-summarization-modal',
-            name: 'Summarize Arxiv Paper',
+            name: 'Arxiv 논문 OpenAI API 이용하여 요약하기',
             callback: () => {
                 this.summarizer.summarizeFromClipboard();
             }
@@ -50,7 +50,7 @@ export default class MyPlugin extends Plugin {
 
         this.addCommand({
             id: 'search-arxiv',
-            name: 'Arxiv 검색',
+            name: '선택된 텍스트로 Arxiv 검색하여 MetaData 가져오고 새로운 파일 작성하기',
             callback: () => {
                 this.search.searchArxiv();
             }
