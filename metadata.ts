@@ -91,7 +91,7 @@ export class ArxivMetadata {
                 .replace(/\n+/g, '\n')  // 연속된 줄바꿈을 하나로 줄임
                 .replace(/\s+/g, ' ')   // 각 줄에서 연속된 공백을 하나로 줄임
                 .split('\n')            // 줄바꿈으로 분리
-                .map(para => para.trim())  // 각 단락의 앞뒤 공백 제거
+                .map(para => para.trim())  // 각 단���의 앞뒤 공백 제거
                 .join('\n\n') || '초록 없음';  // 단락 사이에 빈 줄 추가
 
             console.log('Fetched metadata:', { title, paperLink, publishDate, authors, abstract });
@@ -150,10 +150,25 @@ export class ArxivMetadata {
         return papers
             .filter(paper => paper.isInfluential)
             .map(paper => ({
+                paperId: paper.paperId,
                 title: paper.title,
-                authors: paper.authors.map((author: any) => author.name).join(', '),
+                url: paper.url,
+                venue: paper.venue,
                 year: paper.year,
-                venue: paper.venue
+                abstract: paper.abstract,
+                authors: paper.authors.map((author: any) => author.name).join(', '),
+                arxivId: paper.arxivId,
+                doi: paper.doi,
+                isInfluential: paper.isInfluential,
+                citationCount: paper.citationCount,
+                influentialCitationCount: paper.influentialCitationCount,
+                referenceCount: paper.referenceCount,
+                fieldsOfStudy: paper.fieldsOfStudy,
+                s2FieldsOfStudy: paper.s2FieldsOfStudy,
+                publicationTypes: paper.publicationTypes,
+                publicationDate: paper.publicationDate,
+                journal: paper.journal,
+                intent: paper.intent
             }));
     }
 
@@ -222,14 +237,16 @@ export class ArxivMetadata {
                 if (metadata.influentialCitations && metadata.influentialCitations.length > 0) {
                     console.log('Influential citations:');
                     metadata.influentialCitations.forEach(paper => {
-                        console.log(`- ${paper.title} (${paper.year}) by ${paper.authors}`);
+                        console.log(JSON.stringify(paper, null, 2));
+                        console.log('---');
                     });
                 }
 
                 if (metadata.influentialReferences && metadata.influentialReferences.length > 0) {
                     console.log('Influential references:');
                     metadata.influentialReferences.forEach(paper => {
-                        console.log(`- ${paper.title} (${paper.year}) by ${paper.authors}`);
+                        console.log(JSON.stringify(paper, null, 2));
+                        console.log('---');
                     });
                 }
             } catch (error) {
