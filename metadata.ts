@@ -245,36 +245,67 @@ export class ArxivMetadata {
     private async insertInfluentialPapers(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
         let content = await this.app.vault.read(file);
         
+        content += '\n\n### Influential Papers Cited By\n\n';
         if (citedBy && citedBy.length > 0) {
-            content += '\n\n### Influential Papers Cited By\n\n';
-            content += this.formatInfluentialPapers(citedBy);
+            content += this.createLinksToInfluentialPapers(citedBy, file);
         } else {
-            content += '\n\n### Influential Papers Cited By\n\n정보가 없습니다.\n';
+            content += '정보가 없습니다.\n';
         }
         
+        content += '\n\n### Influential Papers Citing\n\n';
         if (citing && citing.length > 0) {
-            content += '\n\n### Influential Papers Citing\n\n';
-            content += this.formatInfluentialPapers(citing);
+            content += this.createLinksToInfluentialPapers(citing, file);
         } else {
-            content += '\n\n### Influential Papers Citing\n\n정보가 없습니다.\n';
+            content += '정보가 없습니다.\n';
         }
 
         await this.app.vault.modify(file, content);
     }
 
-    private formatInfluentialPapers(papers: any[] | undefined): string {
-        if (!papers || papers.length === 0) {
-            return '정보가 없습니다.\n';
+    private createLinksToInfluentialPapers(papers: any[], currentFile: TFile): string {
+        return papers.map(paper => {
+            const sanitizedTitle = this.sanitizeFileName(paper.title);
+            const newFileName = `${sanitizedTitle}.md`;
+            const newFilePath = currentFile.parent 
+                ? `${currentFile.parent.path}/${newFileName}`
+                : newFileName;
+            
+            this.createPaperFile(newFilePath, paper);
+            
+            return `- [[${sanitizedTitle}]]\n`;
+        }).join('');
+    }
+
+    private async createPaperFile(filePath: string, paper: any) {
+        const content = this.formatPaperContent(paper);
+        await this.app.vault.create(filePath, content);
+    }
+
+    private formatPaperContent(paper: any): string {
+        let paperLink = '';
+        let semanticScholarLink = paper.url || '#';
+
+        if (paper.arxivId) {
+            paperLink = `https://arxiv.org/abs/${paper.arxivId}`;
         }
 
-        return papers.map(paper => {
-            return `- **${paper.title}** (${paper.year || 'N/A'})\n` +
-                   `  Authors: ${paper.authors || 'N/A'}\n` +
-                   `  Venue: ${paper.venue || 'N/A'}\n` +
-                   `  [Paper Link](${paper.url || '#'})\n` +
-                   `  ArXiv ID: ${paper.arxivId || 'N/A'}, DOI: ${paper.doi || 'N/A'}\n` +
-                   `  Citations: ${paper.citationCount || 'N/A'}, Intent: ${(paper.intent && paper.intent.join(', ')) || 'N/A'}\n`;
-        }).join('\n');
+        return `---
+title: "${paper.title}"
+authors: "${paper.authors || 'N/A'}"
+year: ${paper.year || 'N/A'}
+venue: "${paper.venue || 'N/A'}"
+paper_link: "${paperLink}"
+semanticscholar_link: "${semanticScholarLink}"
+arxiv_id: "${paper.arxivId || 'N/A'}"
+doi: "${paper.doi || 'N/A'}"
+citations: ${paper.citationCount || 'N/A'}
+intent: ${JSON.stringify(paper.intent || [])}
+---`;
+    }
+
+    private sanitizeFileName(fileName: string): string {
+        // ':' '\' '/' 문자를 '_'로 대체
+        return fileName.replace(/[:\/\\]/g, '_');
     }
 
     private async renameFile(file: TFile, newTitle: string) {
@@ -297,11 +328,6 @@ export class ArxivMetadata {
             console.error('파일 이름 변경 오류:', error);
             new Notice('파일 이름 변경 중 오류가 발생했습니다.');
         }
-    }
-
-    private sanitizeFileName(fileName: string): string {
-        // ':' '\' '/' 문자를 '_'로 대체
-        return fileName.replace(/[:\/\\]/g, '_');
     }
 
     private objectToYaml(obj: any): string {
