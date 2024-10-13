@@ -104,6 +104,11 @@ export class ArxivMetadata {
                 abstract
             };
 
+            // Semantic Scholar API를 사용하여 인용 정보 가져오기
+            const citationInfo = await this.fetchCitationInfo(arxivId);
+            metadata.numCitedBy = citationInfo.numCitedBy;
+            metadata.numCiting = citationInfo.numCiting;
+
             this.metadataCache.set(arxivId, JSON.stringify(metadata));
 
             return metadata;
@@ -111,6 +116,45 @@ export class ArxivMetadata {
             console.error('Arxiv 메타데이터 가져오기 오류:', error);
             throw new Error('Arxiv 메타데이터를 가져오는 중 오류가 발생했습니다.');
         }
+    }
+
+    async fetchCitationInfo(arxivId: string): Promise<{ numCitedBy: number, numCiting: number, influentialCitations: any[], influentialReferences: any[] }> {
+        const semanticScholarId = `arXiv:${arxivId}`;
+        const url = `https://api.semanticscholar.org/v1/paper/${semanticScholarId}`;
+
+        try {
+            const response = await requestUrl({ url });
+            if (response.status === 200) {
+                const data = JSON.parse(response.text);
+                const influentialCitations = this.getInfluentialPapers(data.citations);
+                const influentialReferences = this.getInfluentialPapers(data.references);
+
+                console.log('Influential citations:', influentialCitations);
+                console.log('Influential references:', influentialReferences);
+
+                return {
+                    numCitedBy: data.numCitedBy || 0,
+                    numCiting: data.numCiting || 0,
+                    influentialCitations,
+                    influentialReferences
+                };
+            }
+        } catch (error) {
+            console.error(`Error fetching citation info for ${arxivId}:`, error);
+        }
+
+        return { numCitedBy: 0, numCiting: 0, influentialCitations: [], influentialReferences: [] };
+    }
+
+    private getInfluentialPapers(papers: any[]): any[] {
+        return papers
+            .filter(paper => paper.isInfluential)
+            .map(paper => ({
+                title: paper.title,
+                authors: paper.authors.map((author: any) => author.name).join(', '),
+                year: paper.year,
+                venue: paper.venue
+            }));
     }
 
     extractArxivId(url: string): string | null {
@@ -138,6 +182,8 @@ export class ArxivMetadata {
                     paper_link: metadata.paperLink || frontmatter.paper_link,
                     publish_date: metadata.publishDate || frontmatter.publish_date,
                     authors: metadata.authors || frontmatter.authors,
+                    num_cited_by: metadata.numCitedBy || 0,
+                    num_citing: metadata.numCiting || 0,
                     checked: frontmatter.hasOwnProperty('checked') ? frontmatter.checked : false,
                     interest: frontmatter.hasOwnProperty('interest') ? frontmatter.interest : null,
                     rating: frontmatter.hasOwnProperty('rating') ? frontmatter.rating : null,
@@ -171,6 +217,21 @@ export class ArxivMetadata {
                 await this.renameFile(file, metadata.title);
 
                 new Notice('메타데이터가 성공적으로 삽입되었습니다.');
+
+                // 영향력 있는 인용 및 참조 논문 정보 콘솔에 출력
+                if (metadata.influentialCitations && metadata.influentialCitations.length > 0) {
+                    console.log('Influential citations:');
+                    metadata.influentialCitations.forEach(paper => {
+                        console.log(`- ${paper.title} (${paper.year}) by ${paper.authors}`);
+                    });
+                }
+
+                if (metadata.influentialReferences && metadata.influentialReferences.length > 0) {
+                    console.log('Influential references:');
+                    metadata.influentialReferences.forEach(paper => {
+                        console.log(`- ${paper.title} (${paper.year}) by ${paper.authors}`);
+                    });
+                }
             } catch (error) {
                 console.error('메타데이터 삽입 오류:', error);
                 new Notice('메타데이터 삽입 중 오류가 발생했습니다.');
@@ -231,4 +292,8 @@ interface ArxivMetadataType {
     publishDate: string;
     authors: string;
     abstract: string;
+    numCitedBy?: number;
+    numCiting?: number;
+    influentialCitations?: any[];
+    influentialReferences?: any[];
 }

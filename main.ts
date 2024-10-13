@@ -29,7 +29,7 @@ export default class MyPlugin extends Plugin {
         this.search = new ArxivSearch(this.app, this);
 
         this.addRibbonIcon('dice', 'Arxiv Summarization', () => {
-            this.summarizer.openModal();
+            this.summarizer.summarizeFromClipboard();
         });
 
         this.addCommand({
