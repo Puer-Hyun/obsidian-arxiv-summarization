@@ -1,4 +1,4 @@
-import { App, Notice, TFile, requestUrl } from 'obsidian';
+import { App, Notice, TFile, requestUrl, Modal, Setting } from 'obsidian';
 import MyPlugin from './main';
 
 export class ArxivMetadata {
@@ -229,10 +229,18 @@ export class ArxivMetadata {
                 // 파일 이름 변경
                 await this.renameFile(file, metadata.title);
 
-                // 영향력 있는 논문 정보 삽입
-                await this.insertInfluentialPapers(file, metadata.influentialCitations, metadata.influentialReferences);
+                // 사용자에게 관련 논문 파일 생성 여부를 묻는 모달 표시
+                new CreateRelatedPapersModal(this.app, async (result) => {
+                    if (result) {
+                        // Yes를 선택한 경우: 기존처럼 관련 논문 파일 생성
+                        await this.insertInfluentialPapers(file, metadata.influentialCitations, metadata.influentialReferences);
+                    } else {
+                        // No를 선택한 경우: 링크만 생성
+                        await this.insertInfluentialPapersLinks(file, metadata.influentialCitations, metadata.influentialReferences);
+                    }
+                    new Notice('메타데이터가 성공적으로 삽입되었습니다.');
+                }).open();
 
-                new Notice('메타데이터가 성공적으로 삽입되었습니다.');
             } catch (error) {
                 console.error('메타데이터 삽입 오류:', error);
                 new Notice('메타데이터 삽입 중 오류가 발생했습니다.');
@@ -245,36 +253,87 @@ export class ArxivMetadata {
     private async insertInfluentialPapers(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
         let content = await this.app.vault.read(file);
         
+        content += '\n\n### Influential Papers Cited By\n\n';
         if (citedBy && citedBy.length > 0) {
-            content += '\n\n### Influential Papers Cited By\n\n';
-            content += this.formatInfluentialPapers(citedBy);
+            content += this.createLinksToInfluentialPapers(citedBy, file);
         } else {
-            content += '\n\n### Influential Papers Cited By\n\n정보가 없습니다.\n';
+            content += '정보가 없습니다.\n';
         }
         
+        content += '\n\n### Influential Papers Citing\n\n';
         if (citing && citing.length > 0) {
-            content += '\n\n### Influential Papers Citing\n\n';
-            content += this.formatInfluentialPapers(citing);
+            content += this.createLinksToInfluentialPapers(citing, file);
         } else {
-            content += '\n\n### Influential Papers Citing\n\n정보가 없습니다.\n';
+            content += '정보가 없습니다.\n';
         }
 
         await this.app.vault.modify(file, content);
     }
 
-    private formatInfluentialPapers(papers: any[] | undefined): string {
-        if (!papers || papers.length === 0) {
-            return '정보가 없습니다.\n';
+    private async insertInfluentialPapersLinks(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
+        let content = await this.app.vault.read(file);
+        
+        content += '\n\n### Influential Papers Cited By\n\n';
+        if (citedBy && citedBy.length > 0) {
+            content += citedBy.map(paper => `- ${paper.title}\n`).join('');
+        } else {
+            content += '정보가 없습니다.\n';
+        }
+        
+        content += '\n\n### Influential Papers Citing\n\n';
+        if (citing && citing.length > 0) {
+            content += citing.map(paper => `- ${paper.title}\n`).join('');
+        } else {
+            content += '정보가 없습니다.\n';
         }
 
+        await this.app.vault.modify(file, content);
+    }
+
+    private createLinksToInfluentialPapers(papers: any[], currentFile: TFile): string {
         return papers.map(paper => {
-            return `- **${paper.title}** (${paper.year || 'N/A'})\n` +
-                   `  Authors: ${paper.authors || 'N/A'}\n` +
-                   `  Venue: ${paper.venue || 'N/A'}\n` +
-                   `  [Paper Link](${paper.url || '#'})\n` +
-                   `  ArXiv ID: ${paper.arxivId || 'N/A'}, DOI: ${paper.doi || 'N/A'}\n` +
-                   `  Citations: ${paper.citationCount || 'N/A'}, Intent: ${(paper.intent && paper.intent.join(', ')) || 'N/A'}\n`;
-        }).join('\n');
+            const sanitizedTitle = this.sanitizeFileName(paper.title);
+            const newFileName = `${sanitizedTitle}.md`;
+            const newFilePath = currentFile.parent 
+                ? `${currentFile.parent.path}/${newFileName}`
+                : newFileName;
+            
+            this.createPaperFile(newFilePath, paper);
+            
+            return `- [[${sanitizedTitle}]]\n`;
+        }).join('');
+    }
+
+    private async createPaperFile(filePath: string, paper: any) {
+        const content = this.formatPaperContent(paper);
+        await this.app.vault.create(filePath, content);
+    }
+
+    private formatPaperContent(paper: any): string {
+        let paperLink = '';
+        let semanticScholarLink = paper.url || '#';
+
+        if (paper.arxivId) {
+            paperLink = `https://arxiv.org/abs/${paper.arxivId}`;
+        }
+
+        return `---
+title: "${paper.title}"
+authors: "${paper.authors || 'N/A'}"
+year: ${paper.year || 'N/A'}
+venue: "${paper.venue || 'N/A'}"
+paper_link: "${paperLink}"
+semanticscholar_link: "${semanticScholarLink}"
+arxiv_id: "${paper.arxivId || 'N/A'}"
+doi: "${paper.doi || 'N/A'}"
+citations: ${paper.citationCount || 'N/A'}
+intent: ${JSON.stringify(paper.intent || [])}
+---`;
+    }
+
+    private sanitizeFileName(fileName: string): string {
+        // ':' '\' '/' 문자를 '_'로 대체
+        return fileName.replace(/[:\/\\]/g, '_');
     }
 
     private async renameFile(file: TFile, newTitle: string) {
@@ -297,11 +356,6 @@ export class ArxivMetadata {
             console.error('파일 이름 변경 오류:', error);
             new Notice('파일 이름 변경 중 오류가 발생했습니다.');
         }
-    }
-
-    private sanitizeFileName(fileName: string): string {
-        // ':' '\' '/' 문자를 '_'로 대체
-        return fileName.replace(/[:\/\\]/g, '_');
     }
 
     private objectToYaml(obj: any): string {
@@ -332,4 +386,43 @@ interface ArxivMetadataType {
     numCiting?: number;
     influentialCitations?: any[];
     influentialReferences?: any[];
+}
+
+class CreateRelatedPapersModal extends Modal {
+    result: boolean;
+    onSubmit: (result: boolean) => void;
+
+    constructor(app: App, onSubmit: (result: boolean) => void) {
+        super(app);
+        this.onSubmit = onSubmit;
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+
+        contentEl.createEl("h1", {text: "관련 논문 파일 생성"});
+
+        new Setting(contentEl)
+            .setName("연관된 인용 논문들을 새로운 파일로 작성하시겠습니까?")
+            .addButton((btn) =>
+                btn
+                    .setButtonText("Yes")
+                    .setCta()
+                    .onClick(() => {
+                        this.close();
+                        this.onSubmit(true);
+                    }))
+            .addButton((btn) =>
+                btn
+                    .setButtonText("No")
+                    .onClick(() => {
+                        this.close();
+                        this.onSubmit(false);
+                    }));
+    }
+
+    onClose() {
+        let {contentEl} = this;
+        contentEl.empty();
+    }
 }
