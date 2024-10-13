@@ -1,18 +1,21 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFolder, FuzzySuggestModal, FuzzyMatch } from 'obsidian';
 import { ArxivSummarizer } from './summarizer';
 import { ArxivMetadata } from './metadata';
 import { ArxivSearch } from './search';
+import { PaperDownloader } from './download_pdf_paper_link';
 
 interface MyPluginSettings {
     openaiApiKey: string;
     translate: boolean;
     targetLanguage: string;
+    paperPaths: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
     openaiApiKey: '',
     translate: false,
-    targetLanguage: '한국어'
+    targetLanguage: '한국어',
+    paperPaths: ''
 }
 
 export default class MyPlugin extends Plugin {
@@ -20,6 +23,7 @@ export default class MyPlugin extends Plugin {
     summarizer: ArxivSummarizer;
     metadata: ArxivMetadata;
     search: ArxivSearch;
+    paperDownloader: PaperDownloader;
 
     async onload() {
         await this.loadSettings();
@@ -27,6 +31,9 @@ export default class MyPlugin extends Plugin {
         this.summarizer = new ArxivSummarizer(this.app, this);
         this.metadata = new ArxivMetadata(this.app, this);
         this.search = new ArxivSearch(this.app, this);
+
+        console.log('Creating PaperDownloader instance');
+        this.paperDownloader = new PaperDownloader(this.app, this);
 
         this.addRibbonIcon('dice', 'Arxiv Summarization', () => {
             this.summarizer.summarizeFromClipboard();
@@ -56,7 +63,16 @@ export default class MyPlugin extends Plugin {
             }
         });
 
-        this.addSettingTab(new SampleSettingTab(this.app, this));
+        this.addCommand({
+            id: 'download-paper',
+            name: 'Download Paper PDF',
+            callback: () => {
+                console.log('Download Paper command triggered');
+                this.paperDownloader.downloadPaper();
+            }
+        });
+
+        this.addSettingTab(new MyPluginSettingTab(this.app, this));
     }
 
     async loadSettings() {
@@ -68,7 +84,7 @@ export default class MyPlugin extends Plugin {
     }
 }
 
-class SampleSettingTab extends PluginSettingTab {
+class MyPluginSettingTab extends PluginSettingTab {
     plugin: MyPlugin;
 
     constructor(app: App, plugin: MyPlugin) {
@@ -120,5 +136,48 @@ class SampleSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }));
         }
+
+        new Setting(containerEl)
+            .setName('Paper Download Paths')
+            .setDesc('Specify the paths to download papers')
+            .addText(text => text
+                .setPlaceholder('path/to/papers')
+                .setValue(this.plugin.settings.paperPaths)
+                .onChange(async (value) => {
+                    this.plugin.settings.paperPaths = value;
+                    await this.plugin.saveSettings();
+                }))
+            .addButton(button => button
+                .setButtonText('Select Folder')
+                .onClick(() => {
+                    new FolderSuggestModal(this.app, (folder) => {
+                        const path = folder.path;
+                        this.plugin.settings.paperPaths = path;
+                        this.plugin.saveSettings();
+                        this.display(); // 설정 화면을 새로고침합니다.
+                    }).open();
+                }));
+    }
+}
+
+class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
+    onChooseItem: (folder: TFolder) => void;
+
+    constructor(app: App, onChooseItem: (folder: TFolder) => void) {
+        super(app);
+        this.onChooseItem = onChooseItem;
+    }
+
+    getItems(): TFolder[] {
+        return this.app.vault.getAllLoadedFiles()
+            .filter((file): file is TFolder => file instanceof TFolder);
+    }
+
+    getItemText(folder: TFolder): string {
+        return folder.path;
+    }
+
+    onChooseSuggestion(item: FuzzyMatch<TFolder>, evt: MouseEvent | KeyboardEvent): void {
+        this.onChooseItem(item.item);
     }
 }
