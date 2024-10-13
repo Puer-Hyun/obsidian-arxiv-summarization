@@ -92,7 +92,7 @@ export class ArxivMetadata {
                 .replace(/\s+/g, ' ')   // 각 줄에서 연속된 공백을 하나로 줄임
                 .split('\n')            // 줄바꿈으로 분리
                 .map(para => para.trim())  // 각 단의 앞뒤 공백 제거
-                .join('\n\n') || '초록 없음';  // 단락 사이에 빈 줄 추가
+                .join('\n\n') || 'Abstract 없음';  // 단락 사이에 빈 줄 추가
 
             console.log('Fetched metadata:', { title, paperLink, publishDate, authors, abstract });
 
@@ -209,8 +209,8 @@ export class ArxivMetadata {
 
                 let content = await this.app.vault.read(file);
 
-                if (!content.includes("### 초록")) {
-                    const abstractContent = `### 초록\n${metadata.abstract}\n`;
+                if (!content.includes("## Abstract")) {
+                    const abstractContent = `## Abstract\n${metadata.abstract}\n`;
                     if (content.trim() === "") {
                         content = abstractContent.trim();
                     } else {
@@ -231,13 +231,29 @@ export class ArxivMetadata {
 
                 // 사용자에게 관련 논문 파일 생성 여부를 묻는 모달 표시
                 new CreateRelatedPapersModal(this.app, async (result) => {
-                    if (result) {
-                        // Yes를 선택한 경우: 기존처럼 관련 논문 파일 생성
-                        await this.insertInfluentialPapers(file, metadata.influentialCitations, metadata.influentialReferences);
-                    } else {
-                        // No를 선택한 경우: 링크만 생성
-                        await this.insertInfluentialPapersLinks(file, metadata.influentialCitations, metadata.influentialReferences);
+                    const updatedContent = await this.app.vault.read(file);
+                    let newContent = updatedContent;
+
+                    if (!newContent.includes("## Influential Papers Cited By")) {
+                        newContent += '\n\n## Influential Papers Cited By\n\n' + 
+                            (result ? this.createLinksToInfluentialPapers(metadata.influentialCitations, file)
+                                    : (metadata.influentialCitations && metadata.influentialCitations.length > 0 
+                                        ? metadata.influentialCitations.map(paper => `- ${paper.title}\n`).join('')
+                                        : '정보가 없습니다.\n'));
                     }
+
+                    if (!newContent.includes("## Influential Papers Citing")) {
+                        newContent += '\n\n## Influential Papers Citing\n\n' + 
+                            (result ? this.createLinksToInfluentialPapers(metadata.influentialReferences, file)
+                                    : (metadata.influentialReferences && metadata.influentialReferences.length > 0 
+                                        ? metadata.influentialReferences.map(paper => `- ${paper.title}\n`).join('')
+                                        : '정보가 없습니다.\n'));
+                    }
+
+                    if (newContent !== updatedContent) {
+                        await this.app.vault.modify(file, newContent);
+                    }
+
                     new Notice('메타데이터가 성공적으로 삽입되었습니다.');
                 }).open();
 
@@ -253,14 +269,14 @@ export class ArxivMetadata {
     private async insertInfluentialPapers(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
         let content = await this.app.vault.read(file);
         
-        content += '\n\n### Influential Papers Cited By\n\n';
+        content += '\n\n## Influential Papers Cited By\n\n';
         if (citedBy && citedBy.length > 0) {
             content += this.createLinksToInfluentialPapers(citedBy, file);
         } else {
             content += '정보가 없습니다.\n';
         }
         
-        content += '\n\n### Influential Papers Citing\n\n';
+        content += '\n\n## Influential Papers Citing\n\n';
         if (citing && citing.length > 0) {
             content += this.createLinksToInfluentialPapers(citing, file);
         } else {
@@ -273,14 +289,14 @@ export class ArxivMetadata {
     private async insertInfluentialPapersLinks(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
         let content = await this.app.vault.read(file);
         
-        content += '\n\n### Influential Papers Cited By\n\n';
+        content += '\n\n## Influential Papers Cited By\n\n';
         if (citedBy && citedBy.length > 0) {
             content += citedBy.map(paper => `- ${paper.title}\n`).join('');
         } else {
             content += '정보가 없습니다.\n';
         }
         
-        content += '\n\n### Influential Papers Citing\n\n';
+        content += '\n\n## Influential Papers Citing\n\n';
         if (citing && citing.length > 0) {
             content += citing.map(paper => `- ${paper.title}\n`).join('');
         } else {
@@ -290,7 +306,10 @@ export class ArxivMetadata {
         await this.app.vault.modify(file, content);
     }
 
-    private createLinksToInfluentialPapers(papers: any[], currentFile: TFile): string {
+    private createLinksToInfluentialPapers(papers: any[] | undefined, currentFile: TFile): string {
+        if (!papers || papers.length === 0) {
+            return '정보가 없습니다.\n';
+        }
         return papers.map(paper => {
             const sanitizedTitle = this.sanitizeFileName(paper.title);
             const newFileName = `${sanitizedTitle}.md`;
