@@ -81,7 +81,7 @@ export class ArxivMetadata {
                 throw new Error('논문 정보를 찾을 수 없습니다.');
             }
 
-            const title = entry.querySelector('title')?.textContent?.trim() || '제목 없음';
+            const title = entry.querySelector('title')?.textContent?.trim().replace(/\s+/g, ' ') || '제목 없음';
             const paperLink = entry.querySelector('id')?.textContent || url;
             const publishDate = entry.querySelector('published')?.textContent?.split('T')[0] || '날짜 없음';
             const authors = Array.from(entry.querySelectorAll('author name'))
@@ -91,7 +91,7 @@ export class ArxivMetadata {
                 .replace(/\n+/g, '\n')  // 연속된 줄바꿈을 하나로 줄임
                 .replace(/\s+/g, ' ')   // 각 줄에서 연속된 공백을 하나로 줄임
                 .split('\n')            // 줄바꿈으로 분리
-                .map(para => para.trim())  // 각 단���의 앞뒤 공백 제거
+                .map(para => para.trim())  // 각 단의 앞뒤 공백 제거
                 .join('\n\n') || '초록 없음';  // 단락 사이에 빈 줄 추가
 
             console.log('Fetched metadata:', { title, paperLink, publishDate, authors, abstract });
