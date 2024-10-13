@@ -108,6 +108,8 @@ export class ArxivMetadata {
             const citationInfo = await this.fetchCitationInfo(arxivId);
             metadata.numCitedBy = citationInfo.numCitedBy;
             metadata.numCiting = citationInfo.numCiting;
+            metadata.influentialCitations = citationInfo.influentialCitations;
+            metadata.influentialReferences = citationInfo.influentialReferences;
 
             this.metadataCache.set(arxivId, JSON.stringify(metadata));
 
@@ -227,22 +229,8 @@ export class ArxivMetadata {
                 // 파일 이름 변경
                 await this.renameFile(file, metadata.title);
 
-                // 영향력 있는 인용 및 참조 논문 정보 콘솔에 출력
-                if (metadata.influentialCitations && metadata.influentialCitations.length > 0) {
-                    console.log('영향력 있는 인용:');
-                    metadata.influentialCitations.forEach(paper => {
-                        console.log(JSON.stringify(paper, null, 2));
-                        console.log('---');
-                    });
-                }
-
-                if (metadata.influentialReferences && metadata.influentialReferences.length > 0) {
-                    console.log('영향력 있는 참조:');
-                    metadata.influentialReferences.forEach(paper => {
-                        console.log(JSON.stringify(paper, null, 2));
-                        console.log('---');
-                    });
-                }
+                // 영향력 있는 논문 정보 삽입
+                await this.insertInfluentialPapers(file, metadata.influentialCitations, metadata.influentialReferences);
 
                 new Notice('메타데이터가 성공적으로 삽입되었습니다.');
             } catch (error) {
@@ -252,6 +240,41 @@ export class ArxivMetadata {
         } else {
             new Notice('메타데이터를 삽입할 파일을 찾을 수 없습니다.');
         }
+    }
+
+    private async insertInfluentialPapers(file: TFile, citedBy: any[] | undefined, citing: any[] | undefined) {
+        let content = await this.app.vault.read(file);
+        
+        if (citedBy && citedBy.length > 0) {
+            content += '\n\n### Influential Papers Cited By\n\n';
+            content += this.formatInfluentialPapers(citedBy);
+        } else {
+            content += '\n\n### Influential Papers Cited By\n\n정보가 없습니다.\n';
+        }
+        
+        if (citing && citing.length > 0) {
+            content += '\n\n### Influential Papers Citing\n\n';
+            content += this.formatInfluentialPapers(citing);
+        } else {
+            content += '\n\n### Influential Papers Citing\n\n정보가 없습니다.\n';
+        }
+
+        await this.app.vault.modify(file, content);
+    }
+
+    private formatInfluentialPapers(papers: any[] | undefined): string {
+        if (!papers || papers.length === 0) {
+            return '정보가 없습니다.\n';
+        }
+
+        return papers.map(paper => {
+            return `- **${paper.title}** (${paper.year || 'N/A'})\n` +
+                   `  Authors: ${paper.authors || 'N/A'}\n` +
+                   `  Venue: ${paper.venue || 'N/A'}\n` +
+                   `  [Paper Link](${paper.url || '#'})\n` +
+                   `  ArXiv ID: ${paper.arxivId || 'N/A'}, DOI: ${paper.doi || 'N/A'}\n` +
+                   `  Citations: ${paper.citationCount || 'N/A'}, Intent: ${(paper.intent && paper.intent.join(', ')) || 'N/A'}\n`;
+        }).join('\n');
     }
 
     private async renameFile(file: TFile, newTitle: string) {
