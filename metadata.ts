@@ -129,8 +129,8 @@ export class ArxivMetadata {
                 const influentialCitations = this.getInfluentialPapers(data.citations);
                 const influentialReferences = this.getInfluentialPapers(data.references);
 
-                console.log('Influential citations:', influentialCitations);
-                console.log('Influential references:', influentialReferences);
+                console.log('영향력 있는 인용:', JSON.stringify(influentialCitations, null, 2));
+                console.log('영향력 있는 참조:', JSON.stringify(influentialReferences, null, 2));
 
                 return {
                     numCitedBy: data.numCitedBy || 0,
@@ -149,27 +149,23 @@ export class ArxivMetadata {
     private getInfluentialPapers(papers: any[]): any[] {
         return papers
             .filter(paper => paper.isInfluential)
-            .map(paper => ({
-                paperId: paper.paperId,
-                title: paper.title,
-                url: paper.url,
-                venue: paper.venue,
-                year: paper.year,
-                abstract: paper.abstract,
-                authors: paper.authors.map((author: any) => author.name).join(', '),
-                arxivId: paper.arxivId,
-                doi: paper.doi,
-                isInfluential: paper.isInfluential,
-                citationCount: paper.citationCount,
-                influentialCitationCount: paper.influentialCitationCount,
-                referenceCount: paper.referenceCount,
-                fieldsOfStudy: paper.fieldsOfStudy,
-                s2FieldsOfStudy: paper.s2FieldsOfStudy,
-                publicationTypes: paper.publicationTypes,
-                publicationDate: paper.publicationDate,
-                journal: paper.journal,
-                intent: paper.intent
-            }));
+            .map(paper => {
+                const result = {
+                    paperId: paper.paperId,
+                    title: paper.title,
+                    url: paper.url,
+                    venue: paper.venue,
+                    year: paper.year,
+                    authors: paper.authors?.map((author: any) => author.name).join(', ') || '',
+                    arxivId: paper.arxivId,
+                    doi: paper.doi,
+                    isInfluential: paper.isInfluential,
+                    citationCount: paper.citationCount,
+                    intent: paper.intent
+                };
+                console.log('처리된 영향력 있는 논문:', JSON.stringify(result, null, 2));
+                return result;
+            });
     }
 
     extractArxivId(url: string): string | null {
@@ -231,11 +227,9 @@ export class ArxivMetadata {
                 // 파일 이름 변경
                 await this.renameFile(file, metadata.title);
 
-                new Notice('메타데이터가 성공적으로 삽입되었습니다.');
-
                 // 영향력 있는 인용 및 참조 논문 정보 콘솔에 출력
                 if (metadata.influentialCitations && metadata.influentialCitations.length > 0) {
-                    console.log('Influential citations:');
+                    console.log('영향력 있는 인용:');
                     metadata.influentialCitations.forEach(paper => {
                         console.log(JSON.stringify(paper, null, 2));
                         console.log('---');
@@ -243,12 +237,14 @@ export class ArxivMetadata {
                 }
 
                 if (metadata.influentialReferences && metadata.influentialReferences.length > 0) {
-                    console.log('Influential references:');
+                    console.log('영향력 있는 참조:');
                     metadata.influentialReferences.forEach(paper => {
                         console.log(JSON.stringify(paper, null, 2));
                         console.log('---');
                     });
                 }
+
+                new Notice('메타데이터가 성공적으로 삽입되었습니다.');
             } catch (error) {
                 console.error('메타데이터 삽입 오류:', error);
                 new Notice('메타데이터 삽입 중 오류가 발생했습니다.');
